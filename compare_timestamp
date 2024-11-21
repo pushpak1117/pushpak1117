@@ -1,10 +1,12 @@
-import requests
 import os
+import requests
 import logging
-from tenacity import retry, stop_after_attempt, wait_fixed, retry_if_exception_type
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
+
+# Temporary file to store the previous timestamp
+TEMP_FILE = "previous_timestamp.txt"
 
 # Vault URLs
 VAULT_ENDPOINTS = {
@@ -18,28 +20,27 @@ VAULT_ENDPOINTS = {
 login_payload = {"password": os.getenv("VAULT_PASSWORD")}
 
 
-# Retry decorator for HTTP requests
-@retry(
-    stop=stop_after_attempt(3),  # Retry up to 3 attempts
-    wait=wait_fixed(2),          # Wait 2 seconds between retries
-    retry=retry_if_exception_type(requests.exceptions.RequestException),  # Retry on network errors
-)
 def make_request(method, url, headers=None, json=None):
     """
-    Make an HTTP request with retry mechanism for network-related errors.
-
-    Args:
-        method (str): HTTP method (GET, POST, etc.).
-        url (str): Full API URL to call.
-        headers (dict): HTTP headers to include.
-        json (dict): JSON payload for the request.
-
-    Returns:
-        dict: JSON response from the server.
+    Make an HTTP request with status code handling.
     """
     response = requests.request(method, url, headers=headers, json=json)
-    response.raise_for_status()  # Raises HTTPError for bad responses (4xx, 5xx)
-    return response.json()
+
+    if response.status_code == 200:
+        logging.info(f"Request successful: {response.status_code}")
+        return response.json()
+    elif response.status_code == 401:
+        logging.error("Unauthorized: Invalid credentials or token.")
+        raise ValueError("Unauthorized access. Check your login credentials or token.")
+    elif response.status_code == 404:
+        logging.error(f"Not Found: {url}")
+        raise ValueError(f"The requested resource at {url} was not found.")
+    elif response.status_code == 500:
+        logging.error("Internal Server Error.")
+        raise ValueError("Server encountered an error. Try again later.")
+    else:
+        logging.error(f"Unexpected error: {response.status_code} - {response.text}")
+        raise ValueError(f"Request failed with status code {response.status_code}: {response.text}")
 
 
 def login_to_vault():
@@ -60,6 +61,24 @@ def list_vault_entries(vault_token):
         raise ValueError("No entries found at the specified path.")
     latest_entry = sorted(entries, reverse=True)[0]
     return latest_entry
+
+
+def save_latest_timestamp(timestamp):
+    """Save the latest timestamp to a temporary file."""
+    with open(TEMP_FILE, "w") as file:
+        file.write(timestamp)
+    logging.info(f"Saved latest timestamp: {timestamp}")
+
+
+def get_previous_timestamp():
+    """Retrieve the previous timestamp from the temporary file."""
+    if os.path.exists(TEMP_FILE):
+        with open(TEMP_FILE, "r") as file:
+            previous_timestamp = file.read().strip()
+        logging.info(f"Previous timestamp found: {previous_timestamp}")
+        return previous_timestamp
+    logging.info("No previous timestamp found.")
+    return None
 
 
 def get_vault_entry(vault_token, latest_timestamp):
@@ -86,8 +105,22 @@ def main():
     try:
         vault_token = login_to_vault()
         latest_timestamp = list_vault_entries(vault_token)
+
+        # Compare with the previous timestamp
+        previous_timestamp = get_previous_timestamp()
+        if latest_timestamp == previous_timestamp:
+            logging.info("Latest timestamp is the same as the previous run. Skipping update.")
+            return
+        else:
+            logging.info("New timestamp detected. Proceeding with update.")
+
+        # Retrieve credentials and update Vault
         credentials = get_vault_entry(vault_token, latest_timestamp)
         update_vault_entry(vault_token, credentials)
+
+        # Save the latest timestamp
+        save_latest_timestamp(latest_timestamp)
+
     except Exception as e:
         logging.error(f"Error: {e}")
 
