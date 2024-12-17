@@ -56,10 +56,13 @@ def transform_data_to_bulk(spaces):
             "_reserved": space.get("_reserved", False)
         }
 
-        # Convert to newline-delimited JSON format required by Bulk API
+        # Append action and document body to payload
         bulk_payload += json.dumps(action_metadata) + "\n"
         bulk_payload += json.dumps(document_body) + "\n"
     
+    # Debug: Print the bulk payload
+    print("Generated Bulk Payload:")
+    print(bulk_payload)
     return bulk_payload
 
 
@@ -79,7 +82,7 @@ def ingest_to_elasticsearch(bulk_payload):
 
     if response.status_code == 200 or response.status_code == 201:
         print("Data successfully ingested into Elasticsearch.")
-        print(response.json())
+        print(json.dumps(response.json(), indent=2))  # Pretty print the response
     else:
         print(f"Error ingesting data into Elasticsearch: {response.status_code} - {response.text}")
 
