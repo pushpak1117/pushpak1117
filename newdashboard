@@ -1,0 +1,106 @@
+import requests
+from requests.auth import HTTPBasicAuth
+import json
+
+# Configuration
+KIBANA_URL = "http://<kibana-host>:<port>"
+KIBANA_API_ENDPOINT = "/api/spaces/space"
+ELASTICSEARCH_URL = "http://<elasticsearch-host>:<port>"
+ELASTICSEARCH_BULK_API = "/_bulk"
+ELASTICSEARCH_INDEX = "spaces"
+KIBANA_USERNAME = "<kibana-username>"  # Replace with your Kibana username
+KIBANA_PASSWORD = "<kibana-password>"  # Replace with your Kibana password
+ELASTICSEARCH_USERNAME = "<es-username>"  # Elasticsearch username
+ELASTICSEARCH_PASSWORD = "<es-password>"  # Elasticsearch password
+
+
+def fetch_kibana_spaces():
+    """
+    Fetch spaces data from Kibana API using Basic Authentication.
+    """
+    headers = {
+        "kbn-xsrf": "true"  # Required for Kibana API calls
+    }
+    response = requests.get(
+        f"{KIBANA_URL}{KIBANA_API_ENDPOINT}",
+        headers=headers,
+        auth=HTTPBasicAuth(KIBANA_USERNAME, KIBANA_PASSWORD)
+    )
+
+    if response.status_code == 200:
+        return response.json()
+    else:
+        print(f"Error fetching data from Kibana: {response.status_code} - {response.text}")
+        return None
+
+
+def transform_data_to_bulk(spaces):
+    """
+    Transform Kibana Spaces API response into Elasticsearch Bulk API format.
+    """
+    bulk_payload = ""
+    for space in spaces:
+        # Action metadata
+        action_metadata = {
+            "index": {
+                "_index": ELASTICSEARCH_INDEX,
+                "_id": space.get("id")
+            }
+        }
+        # Document body
+        document_body = {
+            "id": space.get("id"),
+            "name": space.get("name"),
+            "description": space.get("description"),
+            "disabledFeatures": space.get("disabledFeatures", []),
+            "_reserved": space.get("_reserved", False)
+        }
+
+        # Convert to newline-delimited JSON format required by Bulk API
+        bulk_payload += json.dumps(action_metadata) + "\n"
+        bulk_payload += json.dumps(document_body) + "\n"
+    
+    return bulk_payload
+
+
+def ingest_to_elasticsearch(bulk_payload):
+    """
+    Ingest data into Elasticsearch using Bulk API via HTTP POST.
+    """
+    headers = {
+        "Content-Type": "application/json"
+    }
+    response = requests.post(
+        f"{ELASTICSEARCH_URL}{ELASTICSEARCH_BULK_API}",
+        headers=headers,
+        auth=HTTPBasicAuth(ELASTICSEARCH_USERNAME, ELASTICSEARCH_PASSWORD),
+        data=bulk_payload
+    )
+
+    if response.status_code == 200 or response.status_code == 201:
+        print("Data successfully ingested into Elasticsearch.")
+        print(response.json())
+    else:
+        print(f"Error ingesting data into Elasticsearch: {response.status_code} - {response.text}")
+
+
+def main():
+    """
+    Main function to fetch Kibana spaces, transform data, and ingest into Elasticsearch.
+    """
+    # Step 1: Fetch data from Kibana Spaces API
+    spaces_data = fetch_kibana_spaces()
+    if spaces_data:
+        print("Fetched spaces data successfully. Transforming data for bulk ingestion...")
+        
+        # Step 2: Transform data to Elasticsearch Bulk API format
+        bulk_payload = transform_data_to_bulk(spaces_data)
+        
+        # Step 3: Ingest data into Elasticsearch
+        ingest_to_elasticsearch(bulk_payload)
+    else:
+        print("Failed to fetch Kibana spaces data.")
+
+
+if __name__ == "__main__":
+    main()
