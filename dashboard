@@ -1,0 +1,61 @@
+import requests
+from elasticsearch import Elasticsearch, helpers
+
+# Configuration
+KIBANA_URL = "http://<kibana-host>:<port>"
+KIBANA_API_ENDPOINT = "/api/spaces/space"
+ELASTICSEARCH_URL = "http://<elasticsearch-host>:<port>"
+ELASTICSEARCH_INDEX = "spaces"
+KIBANA_API_KEY = "<kibana-api-key>"  # Replace with your Kibana API key
+ELASTICSEARCH_USERNAME = "<es-username>"  # Elasticsearch username
+ELASTICSEARCH_PASSWORD = "<es-password>"  # Elasticsearch password
+
+def fetch_kibana_spaces():
+    """Fetch spaces data from Kibana API."""
+    headers = {
+        "kbn-xsrf": "true",  # Required for Kibana API calls
+        "Authorization": f"ApiKey {KIBANA_API_KEY}"
+    }
+    response = requests.get(f"{KIBANA_URL}{KIBANA_API_ENDPOINT}", headers=headers)
+
+    if response.status_code == 200:
+        return response.json()
+    else:
+        print(f"Error fetching data from Kibana: {response.status_code} - {response.text}")
+        return None
+
+def prepare_bulk_data(spaces):
+    """Prepare data for Elasticsearch Bulk API."""
+    actions = []
+    for space in spaces:
+        action = {
+            "index": {
+                "_index": ELASTICSEARCH_INDEX,
+                "_id": space.get("id")  # Use the 'id' as the document ID
+            }
+        }
+        actions.append(action)
+        actions.append(space)  # Add the document itself
+    return actions
+
+def ingest_to_elasticsearch(actions):
+    """Ingest data into Elasticsearch using Bulk API."""
+    es = Elasticsearch(
+        [ELASTICSEARCH_URL],
+        http_auth=(ELASTICSEARCH_USERNAME, ELASTICSEARCH_PASSWORD)
+    )
+
+    try:
+        helpers.bulk(es, actions)
+        print(f"Successfully ingested {len(actions)//2} documents into the '{ELASTICSEARCH_INDEX}' index.")
+    except Exception as e:
+        print(f"Error ingesting data into Elasticsearch: {e}")
+
+def main():
+    spaces_data = fetch_kibana_spaces()
+    if spaces_data:
+        bulk_data = prepare_bulk_data(spaces_data)
+        ingest_to_elasticsearch(bulk_data)
+
+if __name__ == "__main__":
+    main()
