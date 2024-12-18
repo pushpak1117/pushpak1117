@@ -5,6 +5,7 @@ import json
 # Configuration
 KIBANA_URL = "http://<kibana-host>:<port>"
 KIBANA_API_ENDPOINT = "/api/spaces/space"
+WATCHES_API_ENDPOINT = "/.watches/_search?size=5000"
 ELASTICSEARCH_URL = "http://<elasticsearch-host>:<port>"
 ELASTICSEARCH_BULK_API = "/_bulk"
 ELASTICSEARCH_INDEX = "spaces"
@@ -18,56 +19,81 @@ def fetch_kibana_spaces():
     """
     Fetch spaces data from Kibana API using Basic Authentication.
     """
-    headers = {
-        "kbn-xsrf": "true"  # Required for Kibana API calls
-    }
+    headers = {"kbn-xsrf": "true"}
     response = requests.get(
         f"{KIBANA_URL}{KIBANA_API_ENDPOINT}",
         headers=headers,
-        auth=HTTPBasicAuth(KIBANA_USERNAME, KIBANA_PASSWORD)
+        auth=HTTPBasicAuth(KIBANA_USERNAME, KIBANA_PASSWORD),
     )
-
     if response.status_code == 200:
         return response.json()
     else:
-        print(f"Error fetching data from Kibana: {response.status_code} - {response.text}")
+        print(f"Error fetching Kibana spaces: {response.status_code} - {response.text}")
         return None
 
 
-def transform_data_to_bulk(spaces):
+def fetch_watches():
+    """
+    Fetch watches data from Elasticsearch Watches API.
+    """
+    headers = {"Content-Type": "application/json"}
+    response = requests.get(
+        f"{ELASTICSEARCH_URL}{WATCHES_API_ENDPOINT}",
+        headers=headers,
+        auth=HTTPBasicAuth(ELASTICSEARCH_USERNAME, ELASTICSEARCH_PASSWORD),
+    )
+    if response.status_code == 200:
+        return response.json()
+    else:
+        print(f"Error fetching watches: {response.status_code} - {response.text}")
+        return None
+
+
+def transform_spaces_to_bulk(spaces):
     """
     Transform Kibana Spaces API response into Elasticsearch Bulk API format.
     Removes everything after the right of a hyphen in `_id`.
     """
     bulk_payload = ""
     for space in spaces:
-        # Transform `_id` to remove everything after the first hyphen
         original_id = space.get("id", "")
         transformed_id = original_id.split("-")[0]  # Extract portion before hyphen
 
-        # Action metadata
-        action_metadata = {
-            "index": {
-                "_index": ELASTICSEARCH_INDEX,
-                "_id": transformed_id  # Use transformed ID
-            }
-        }
-        # Document body
+        action_metadata = {"index": {"_index": ELASTICSEARCH_INDEX, "_id": transformed_id}}
         document_body = {
-            "id": transformed_id,  # Use transformed ID in the document
+            "type": "space",  # Add type field to differentiate spaces
+            "id": transformed_id,
             "name": space.get("name"),
             "description": space.get("description"),
             "disabledFeatures": space.get("disabledFeatures", []),
-            "_reserved": space.get("_reserved", False)
+            "_reserved": space.get("_reserved", False),
         }
-
-        # Append action and document body to payload
         bulk_payload += json.dumps(action_metadata) + "\n"
         bulk_payload += json.dumps(document_body) + "\n"
-    
-    # Debug: Print the bulk payload
-    print("Generated Bulk Payload:")
-    print(bulk_payload)
+    return bulk_payload
+
+
+def transform_watches_to_bulk(watches):
+    """
+    Transform Watches API response into Elasticsearch Bulk API format.
+    """
+    bulk_payload = ""
+    hits = watches.get("hits", {}).get("hits", [])
+    for watch in hits:
+        watch_id = watch.get("_id", "")
+        source = watch.get("_source", {})
+
+        action_metadata = {"index": {"_index": ELASTICSEARCH_INDEX, "_id": watch_id}}
+        document_body = {
+            "type": "watch",  # Add type field to differentiate watches
+            "id": watch_id,
+            "trigger": source.get("trigger", {}),
+            "input": source.get("input", {}),
+            "actions": source.get("actions", {}),
+            "metadata": source.get("metadata", {}),
+        }
+        bulk_payload += json.dumps(action_metadata) + "\n"
+        bulk_payload += json.dumps(document_body) + "\n"
     return bulk_payload
 
 
@@ -75,39 +101,46 @@ def ingest_to_elasticsearch(bulk_payload):
     """
     Ingest data into Elasticsearch using Bulk API via HTTP POST.
     """
-    headers = {
-        "Content-Type": "application/json"
-    }
+    headers = {"Content-Type": "application/json"}
     response = requests.post(
         f"{ELASTICSEARCH_URL}{ELASTICSEARCH_BULK_API}",
         headers=headers,
         auth=HTTPBasicAuth(ELASTICSEARCH_USERNAME, ELASTICSEARCH_PASSWORD),
-        data=bulk_payload
+        data=bulk_payload,
     )
 
-    if response.status_code == 200 or response.status_code == 201:
+    if response.status_code in [200, 201]:
         print("Data successfully ingested into Elasticsearch.")
-        print(json.dumps(response.json(), indent=2))  # Pretty print the response
+        print(json.dumps(response.json(), indent=2))
     else:
         print(f"Error ingesting data into Elasticsearch: {response.status_code} - {response.text}")
 
 
 def main():
     """
-    Main function to fetch Kibana spaces, transform data, and ingest into Elasticsearch.
+    Main function to fetch data, transform, and ingest into Elasticsearch.
     """
-    # Step 1: Fetch data from Kibana Spaces API
+    # Step 1: Fetch Kibana Spaces data
     spaces_data = fetch_kibana_spaces()
+    spaces_bulk_payload = ""
     if spaces_data:
-        print("Fetched spaces data successfully. Transforming data for bulk ingestion...")
-        
-        # Step 2: Transform data to Elasticsearch Bulk API format
-        bulk_payload = transform_data_to_bulk(spaces_data)
-        
-        # Step 3: Ingest data into Elasticsearch
-        ingest_to_elasticsearch(bulk_payload)
+        print("Fetched Kibana spaces. Transforming data for bulk ingestion...")
+        spaces_bulk_payload = transform_spaces_to_bulk(spaces_data)
+
+    # Step 2: Fetch Watches data
+    watches_data = fetch_watches()
+    watches_bulk_payload = ""
+    if watches_data:
+        print("Fetched watches. Transforming data for bulk ingestion...")
+        watches_bulk_payload = transform_watches_to_bulk(watches_data)
+
+    # Step 3: Combine and ingest both payloads
+    combined_payload = spaces_bulk_payload + watches_bulk_payload
+    if combined_payload:
+        print("Ingesting combined payload into Elasticsearch...")
+        ingest_to_elasticsearch(combined_payload)
     else:
-        print("Failed to fetch Kibana spaces data.")
+        print("No data to ingest.")
 
 
 if __name__ == "__main__":
