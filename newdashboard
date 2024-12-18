@@ -37,19 +37,24 @@ def fetch_kibana_spaces():
 def transform_data_to_bulk(spaces):
     """
     Transform Kibana Spaces API response into Elasticsearch Bulk API format.
+    Removes everything after the right of a hyphen in `_id`.
     """
     bulk_payload = ""
     for space in spaces:
+        # Transform `_id` to remove everything after the first hyphen
+        original_id = space.get("id", "")
+        transformed_id = original_id.split("-")[0]  # Extract portion before hyphen
+
         # Action metadata
         action_metadata = {
             "index": {
                 "_index": ELASTICSEARCH_INDEX,
-                "_id": space.get("id")
+                "_id": transformed_id  # Use transformed ID
             }
         }
         # Document body
         document_body = {
-            "id": space.get("id"),
+            "id": transformed_id,  # Use transformed ID in the document
             "name": space.get("name"),
             "description": space.get("description"),
             "disabledFeatures": space.get("disabledFeatures", []),
