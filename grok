@@ -1,0 +1,41 @@
+%{DATESTAMP:log_date} \[%{LOGLEVEL:log_level}\]: GENO: Processing Transaction - End for %{DATA:txn_id}-%{YEAR}%{DATA:br_timestamp}-%{WORD:account_no}
+
+
+12-15 17:34:36,910 [INFO]: GENO: Processing Transaction - End for 00062412160006943256965514A02024-12-15-13.09.25.000000- FLD2321
+
+
+input {
+  stdin {}
+}
+
+filter {
+  # Grok pattern to parse the log line
+  grok {
+    match => {
+      "message" => "%{DAY:day} %{MONTH:month} %{MONTHDAY:monthday} %{TIME:time} %{WORD:timezone} %{YEAR:year} %{NOTSPACE:identifier} %{NUMBER:process_id}"
+    }
+  }
+
+  # Combine the parsed timestamp fields into a single timestamp
+  mutate {
+    add_field => {
+      "parsed_timestamp" => "%{year} %{month} %{monthday} %{time} %{timezone}"
+    }
+  }
+
+  # Use the date filter to override @timestamp
+  date {
+    match => ["parsed_timestamp", "yyyy MMM dd HH:mm:ss zzz"]
+    target => "@timestamp"
+    timezone => "America/Toronto"
+  }
+
+  # Optionally remove intermediate fields
+  mutate {
+    remove_field => ["parsed_timestamp"]
+  }
+}
+
+output {
+  stdout { codec => rubydebug }
+}
