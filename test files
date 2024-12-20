@@ -1,0 +1,83 @@
+import unittest
+from unittest.mock import patch, MagicMock
+
+class TestElasticsearchStore(unittest.TestCase):
+
+    @patch("your_module.ElasticConnection.create_elastic_connection")
+    @patch("your_module.ElasticConnection.close_elastic_connection")
+    @patch("your_module.ElasticsearchStore")
+    @patch("your_module.openai_embedding")
+    def test_fetch_data_success(self, mock_embedding, mock_store, mock_create_conn, mock_close_conn):
+        # Mocking necessary methods
+        mock_create_conn.return_value = None  # Simulating successful connection
+        mock_close_conn.return_value = None  # Simulating successful disconnection
+
+        # Mocking embedding object
+        mock_embedding.generate_embedding_object.return_value = "mock_embedding"
+
+        # Mocking ElasticsearchStore
+        mock_store.return_value.search.return_value = ["doc1", "doc2"]
+
+        # Initialize your class instance
+        obj = YourClass()  # Replace `YourClass` with the actual class name
+        obj.es_client = "mock_client"  # Simulate an active Elasticsearch client
+
+        # Call the method
+        result = obj.fetch_data_from_elasticsearchstore("index_name", "test_question")
+
+        # Assertions
+        self.assertEqual(result, ["doc1", "doc2"])
+        mock_create_conn.assert_called_once()
+        mock_embedding.generate_embedding_object.assert_called_once()
+        mock_store.assert_called_once_with(
+            embedding="mock_embedding",
+            index_name="index_name",
+            es_connection="mock_client"
+        )
+        mock_close_conn.assert_called_once_with("mock_client")
+
+    @patch("your_module.ElasticConnection.create_elastic_connection")
+    def test_fetch_data_connection_failure(self, mock_create_conn):
+        # Simulate connection failure
+        mock_create_conn.side_effect = Exception("Connection failed")
+
+        # Initialize your class instance
+        obj = YourClass()  # Replace `YourClass` with the actual class name
+
+        # Call the method and check for exception
+        with self.assertRaises(Exception) as context:
+            obj.fetch_data_from_elasticsearchstore("index_name", "test_question")
+        self.assertEqual(str(context.exception), "Connection failed")
+
+    @patch("your_module.ElasticConnection.create_elastic_connection")
+    def test_fetch_data_no_es_client(self, mock_create_conn):
+        # Mock the connection method
+        mock_create_conn.return_value = None
+
+        # Initialize your class instance
+        obj = YourClass()  # Replace `YourClass` with the actual class name
+        obj.es_client = ""  # Simulate no client available
+
+        # Call the method and check for exception
+        with self.assertRaises(Exception) as context:
+            obj.fetch_data_from_elasticsearchstore("index_name", "test_question")
+        self.assertIn("Elastic connection not established", str(context.exception))
+
+    @patch("your_module.ElasticsearchStore")
+    @patch("your_module.openai_embedding")
+    def test_fetch_data_similarity_search_failure(self, mock_embedding, mock_store):
+        # Mock embedding and store
+        mock_embedding.generate_embedding_object.return_value = "mock_embedding"
+        mock_store.return_value.search.side_effect = Exception("Search failed")
+
+        # Initialize your class instance
+        obj = YourClass()  # Replace `YourClass` with the actual class name
+        obj.es_client = "mock_client"  # Simulate an active client
+
+        # Call the method and check for exception
+        with self.assertRaises(Exception) as context:
+            obj.fetch_data_from_elasticsearchstore("index_name", "test_question")
+        self.assertIn("Search failed", str(context.exception))
+
+if __name__ == "__main__":
+    unittest.main()
